@@ -4,8 +4,8 @@
 // FST abstract base class definition, state and arc iterator interface, and
 // suggested base implementation.
 
-#ifndef FST_LIB_FST_H_
-#define FST_LIB_FST_H_
+#ifndef FST_FST_H_
+#define FST_FST_H_
 
 #include <sys/types.h>
 
@@ -19,7 +19,7 @@
 #include <utility>
 
 #include <fst/compat.h>
-#include <fst/types.h>
+#include <fst/flags.h>
 #include <fst/log.h>
 #include <fstream>
 
@@ -38,11 +38,11 @@ namespace fst {
 bool IsFstHeader(std::istream &, const string &);
 
 class FstHeader;
-template <class Arc>
 
+template <class Arc>
 struct StateIteratorData;
-template <class Arc>
 
+template <class Arc>
 struct ArcIteratorData;
 
 template <class Arc>
@@ -176,8 +176,8 @@ enum MatchType {
   MATCH_UNKNOWN = 5
 };  // Otherwise, match type unknown.
 
-constexpr int kNoStateId = -1;  // Not a valid state ID.
 constexpr int kNoLabel = -1;    // Not a valid label.
+constexpr int kNoStateId = -1;  // Not a valid state ID.
 
 // A generic FST, templated on the arc definition, with common-demoninator
 // methods (use StateIterator and ArcIterator to iterate over its states and
@@ -288,14 +288,15 @@ class Fst {
   virtual const SymbolTable *OutputSymbols() const = 0;
 
   // For generic state iterator construction (not normally called directly by
-  // users).
+  // users). Does not copy the FST.
   virtual void InitStateIterator(StateIteratorData<Arc> *data) const = 0;
 
   // For generic arc iterator construction (not normally called directly by
-  // users).
+  // users). Does not copy the FST.
   virtual void InitArcIterator(StateId s, ArcIteratorData<Arc> *data) const = 0;
 
   // For generic matcher construction (not normally called directly by users).
+  // Does not copy the FST.
   virtual MatcherBase<Arc> *InitMatcher(MatchType match_type) const;
 
  protected:
@@ -366,6 +367,7 @@ struct StateIteratorData {
 //     StateId s = siter.Value();
 //     ...
 //   }
+// There is no copying of the FST.
 template <class FST>
 class StateIterator {
  public:
@@ -471,6 +473,7 @@ struct ArcIteratorData {
 //     StdArc &arc = aiter.Value();
 //     ...
 //   }
+// There is no copying of the FST.
 template <class FST>
 class ArcIterator {
  public:
@@ -621,15 +624,13 @@ inline size_t NumOutputEpsilons(const Fst<Arc> &fst, typename Arc::StateId s) {
   return fst.NumOutputEpsilons(s);
 }
 
-}  // namespace internal
-
 // FST implementation base.
 //
 // This is the recommended FST implementation base class. It will handle
 // reference counts, property bits, type information and symbols.
-
-namespace internal {
-
+//
+// Users are discouraged, but not prohibited, from subclassing this outside the
+// FST library.
 template <class Arc>
 class FstImpl {
  public:
@@ -644,7 +645,19 @@ class FstImpl {
         isymbols_(impl.isymbols_ ? impl.isymbols_->Copy() : nullptr),
         osymbols_(impl.osymbols_ ? impl.osymbols_->Copy() : nullptr) {}
 
+  FstImpl(FstImpl<Arc> &&impl) noexcept;
+
   virtual ~FstImpl() {}
+
+  FstImpl &operator=(const FstImpl<Arc> &impl) {
+    properties_ = impl.properties_;
+    type_ = impl.type_;
+    isymbols_ = impl.isymbols_ ? impl.isymbols_->Copy() : nullptr;
+    osymbols_ = impl.osymbols_ ? impl.osymbols_->Copy() : nullptr;
+    return *this;
+  }
+
+  FstImpl &operator=(FstImpl<Arc> &&impl) noexcept;
 
   const string &Type() const { return type_; }
 
@@ -789,6 +802,13 @@ class FstImpl {
 };
 
 template <class Arc>
+inline FstImpl<Arc>::FstImpl(FstImpl<Arc> &&) noexcept = default;
+
+template <class Arc>
+inline FstImpl<Arc> &FstImpl<Arc>::operator=(
+    FstImpl<Arc> &&) noexcept = default;
+
+template <class Arc>
 bool FstImpl<Arc>::ReadHeader(std::istream &strm, const FstReadOptions &opts,
                               int min_version, FstHeader *hdr) {
   if (opts.header) {
@@ -851,7 +871,6 @@ class ImplToFst : public FST {
   using Arc = typename Impl::Arc;
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
-  using FST::operator=;
 
   StateId Start() const override { return impl_->Start(); }
 
@@ -900,6 +919,28 @@ class ImplToFst : public FST {
     }
   }
 
+  ImplToFst() = delete;
+
+  ImplToFst(const ImplToFst<Impl, FST> &fst) : impl_(fst.impl_) {}
+
+  ImplToFst(ImplToFst<Impl, FST> &&fst) noexcept
+      : impl_(std::move(fst.impl_)) {
+    fst.impl_ = std::make_shared<Impl>();
+  }
+
+  ImplToFst<Impl, FST> &operator=(const ImplToFst<Impl, FST> &fst) {
+    impl_ = fst.impl_;
+    return *this;
+  }
+
+  ImplToFst<Impl, FST> &operator=(ImplToFst<Impl, FST> &&fst) noexcept {
+    if (this != &fst) {
+      impl_ = std::move(fst.impl_);
+      fst.impl_ = std::make_shared<Impl>();
+    }
+    return *this;
+  }
+
   // Returns raw pointers to the shared object.
   const Impl *GetImpl() const { return impl_.get(); }
 
@@ -910,7 +951,7 @@ class ImplToFst : public FST {
 
   bool Unique() const { return impl_.unique(); }
 
-  void SetImpl(std::shared_ptr<Impl> impl) { impl_ = impl; }
+  void SetImpl(std::shared_ptr<Impl> impl) { impl_ = std::move(impl); }
 
  private:
   template <class IFST, class OFST>
@@ -936,18 +977,23 @@ void Cast(const IFST &ifst, OFST *ofst) {
 // FST serialization.
 
 template <class Arc>
-void FstToString(const Fst<Arc> &fst, string *result) {
+string FstToString(const Fst<Arc> &fst,
+                   const FstWriteOptions &options =
+                       FstWriteOptions("FstToString")) {
   std::ostringstream ostrm;
-  fst.Write(ostrm, FstWriteOptions("FstToString"));
-  *result = ostrm.str();
+  fst.Write(ostrm, options);
+  return ostrm.str();
+}
+
+template <class Arc>
+void FstToString(const Fst<Arc> &fst, string *result) {
+  *result = FstToString(fst);
 }
 
 template <class Arc>
 void FstToString(const Fst<Arc> &fst, string *result,
                  const FstWriteOptions &options) {
-  std::ostringstream ostrm;
-  fst.Write(ostrm, options);
-  *result = ostrm.str();
+  *result = FstToString(fst, options);
 }
 
 template <class Arc>
@@ -958,4 +1004,4 @@ Fst<Arc> *StringToFst(const string &s) {
 
 }  // namespace fst
 
-#endif  // FST_LIB_FST_H_
+#endif  // FST_FST_H_

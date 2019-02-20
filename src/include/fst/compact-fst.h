@@ -4,8 +4,8 @@
 // FST Class for memory-efficient representation of common types of
 // FSTs: linear automata, acceptors, unweighted FSTs, ...
 
-#ifndef FST_LIB_COMPACT_FST_H_
-#define FST_LIB_COMPACT_FST_H_
+#ifndef FST_COMPACT_FST_H_
+#define FST_COMPACT_FST_H_
 
 #include <climits>
 #include <iterator>
@@ -252,9 +252,7 @@ DefaultCompactStore<Element, Unsigned>::DefaultCompactStore(
   for (StateIterator<Fst<Arc>> siter(fst); !siter.Done(); siter.Next()) {
     ++nstates_;
     const auto s = siter.Value();
-    for (ArcIterator<Fst<Arc>> aiter(fst, s); !aiter.Done(); aiter.Next()) {
-      ++narcs_;
-    }
+    narcs_ += fst.NumArcs(s);
     if (fst.Final(s) != Weight::Zero()) ++nfinals;
   }
   if (compactor.Size() == -1) {
@@ -1563,4 +1561,4 @@ using StdCompactUnweightedAcceptorFst =
 
 }  // namespace fst
 
-#endif  // FST_LIB_COMPACT_FST_H_
+#endif  // FST_COMPACT_FST_H_

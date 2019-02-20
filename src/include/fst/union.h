@@ -3,10 +3,11 @@
 //
 // Functions and classes to compute the union of two FSTs.
 
-#ifndef FST_LIB_UNION_H_
-#define FST_LIB_UNION_H_
+#ifndef FST_UNION_H_
+#define FST_UNION_H_
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 #include <fst/mutable-fst.h>
@@ -61,7 +62,7 @@ void Union(MutableFst<Arc> *fst1, const Fst<Arc> &fst2) {
     for (ArcIterator<Fst<Arc>> aiter(fst2, s2); !aiter.Done(); aiter.Next()) {
       auto arc = aiter.Value();  // Copy intended.
       arc.nextstate += numstates1;
-      fst1->AddArc(s1, arc);
+      fst1->AddArc(s1, std::move(arc));
     }
   }
   const auto start1 = fst1->Start();
@@ -155,4 +156,4 @@ using StdUnionFst = UnionFst<StdArc>;
 
 }  // namespace fst
 
-#endif  // FST_LIB_UNION_H_
+#endif  // FST_UNION_H_

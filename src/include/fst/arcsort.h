@@ -3,8 +3,8 @@
 //
 // Functions and classes to sort arcs in an FST.
 
-#ifndef FST_LIB_ARCSORT_H_
-#define FST_LIB_ARCSORT_H_
+#ifndef FST_ARCSORT_H_
+#define FST_ARCSORT_H_
 
 #include <algorithm>
 #include <string>
@@ -26,7 +26,7 @@ class ArcSortMapper {
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  ArcSortMapper(const Fst<Arc> &fst, const Compare &comp)
+  constexpr ArcSortMapper(const Fst<Arc> &fst, const Compare &comp)
       : fst_(fst), comp_(comp), i_(0) {}
 
   // Allows updating Fst argument; pass only if changed.
@@ -169,13 +169,13 @@ class ArcIterator<ArcSortFst<Arc, Compare>>
 template <class Arc>
 class ILabelCompare {
  public:
-  ILabelCompare() {}
+  constexpr ILabelCompare() {}
 
-  bool operator()(const Arc &arc1, const Arc &arc2) const {
+  constexpr bool operator()(const Arc &arc1, const Arc &arc2) const {
     return arc1.ilabel < arc2.ilabel;
   }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return (props & kArcSortProperties) | kILabelSorted |
            (props & kAcceptor ? kOLabelSorted : 0);
   }
@@ -185,13 +185,13 @@ class ILabelCompare {
 template <class Arc>
 class OLabelCompare {
  public:
-  OLabelCompare() {}
+  constexpr OLabelCompare() {}
 
-  bool operator()(const Arc &arc1, const Arc &arc2) const {
+  constexpr bool operator()(const Arc &arc1, const Arc &arc2) const {
     return arc1.olabel < arc2.olabel;
   }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return (props & kArcSortProperties) | kOLabelSorted |
            (props & kAcceptor ? kILabelSorted : 0);
   }
@@ -208,4 +208,4 @@ using StdOLabelCompare = OLabelCompare<StdArc>;
 
 }  // namespace fst
 
-#endif  // FST_LIB_ARCSORT_H_
+#endif  // FST_ARCSORT_H_

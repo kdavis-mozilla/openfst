@@ -4,14 +4,15 @@
 // Pair weight templated base class for weight classes that contain two weights
 // (e.g. Product, Lexicographic).
 
-#ifndef FST_LIB_PAIR_WEIGHT_H_
-#define FST_LIB_PAIR_WEIGHT_H_
+#ifndef FST_PAIR_WEIGHT_H_
+#define FST_PAIR_WEIGHT_H_
 
 #include <climits>
 #include <stack>
 #include <string>
 #include <utility>
 
+#include <fst/flags.h>
 #include <fst/log.h>
 
 #include <fst/weight.h>
@@ -26,9 +27,6 @@ class PairWeight {
       PairWeight<typename W1::ReverseWeight, typename W2::ReverseWeight>;
 
   PairWeight() {}
-
-  PairWeight(const PairWeight &weight)
-      : value1_(weight.value1_), value2_(weight.value2_) {}
 
   PairWeight(W1 w1, W2 w2) : value1_(std::move(w1)), value2_(std::move(w2)) {}
 
@@ -55,12 +53,6 @@ class PairWeight {
   std::ostream &Write(std::ostream &strm) const {
     value1_.Write(strm);
     return value2_.Write(strm);
-  }
-
-  PairWeight<W1, W2> &operator=(const PairWeight<W1, W2> &weight) {
-    value1_ = weight.Value1();
-    value2_ = weight.Value2();
-    return *this;
   }
 
   bool Member() const { return value1_.Member() && value2_.Member(); }
@@ -160,4 +152,4 @@ class WeightGenerate<PairWeight<W1, W2>> {
 
 }  // namespace fst
 
-#endif  // FST_LIB_PAIR_WEIGHT_H_
+#endif  // FST_PAIR_WEIGHT_H_

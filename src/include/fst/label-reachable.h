@@ -4,8 +4,8 @@
 // Class to determine if a non-epsilon label can be read as the first
 // non-epsilon symbol along some path from a given state.
 
-#ifndef FST_LIB_LABEL_REACHABLE_H_
-#define FST_LIB_LABEL_REACHABLE_H_
+#ifndef FST_LABEL_REACHABLE_H_
+#define FST_LABEL_REACHABLE_H_
 
 #include <unordered_map>
 #include <utility>
@@ -398,16 +398,17 @@ class LabelReachable {
         ++indeg[arc.nextstate];  // Finds in-degrees for next step.
       }
       // Redirects final weights to new final state.
-      const auto final_weight = fst_->Final(s);
+      auto final_weight = fst_->Final(s);
       if (final_weight != Weight::Zero()) {
         auto insert_result = label2state_.insert(std::make_pair(kNoLabel, ons));
         if (insert_result.second) {
           indeg.push_back(0);
           ++ons;
         }
-        Arc arc(kNoLabel, kNoLabel, final_weight, label2state_[kNoLabel]);
-        fst_->AddArc(s, arc);
-        ++indeg[arc.nextstate];  // Finds in-degrees for next step.
+        const auto nextstate = label2state_[kNoLabel];
+        fst_->EmplaceArc(s, kNoLabel, kNoLabel, std::move(final_weight),
+                         nextstate);
+        ++indeg[nextstate];  // Finds in-degrees for next step.
         fst_->SetFinal(s, Weight::Zero());
       }
     }
@@ -421,8 +422,7 @@ class LabelReachable {
     fst_->SetStart(start);
     for (StateId s = 0; s < start; ++s) {
       if (indeg[s] == 0) {
-        Arc arc(0, 0, Weight::One(), s);
-        fst_->AddArc(start, arc);
+        fst_->EmplaceArc(start, 0, 0, Weight::One(), s);
       }
     }
   }
@@ -470,28 +470,14 @@ class LabelReachable {
     ssize_t low = aiter_begin;
     ssize_t high = aiter_end;
     while (low < high) {
-      ssize_t mid = (low + high) / 2;
+      const ssize_t mid = low + (high - low) / 2;
       aiter->Seek(mid);
       auto label =
           reach_fst_input_ ? aiter->Value().ilabel : aiter->Value().olabel;
-      if (label > match_label) {
-        high = mid;
-      } else if (label < match_label) {
+      if (label < match_label) {
         low = mid + 1;
       } else {
-        // Finds first matching label (when non-deterministic).
-        for (ssize_t i = mid; i > low; --i) {
-          aiter->Seek(i - 1);
-          label =
-              reach_fst_input_ ? aiter->Value().ilabel : aiter->Value().olabel;
-          if (label != match_label) {
-            aiter->Seek(i);
-            aiter->SetFlags(kArcValueFlags, kArcValueFlags);
-            return i;
-          }
-        }
-        aiter->SetFlags(kArcValueFlags, kArcValueFlags);
-        return low;
+        high = mid;
       }
     }
     aiter->Seek(low);
@@ -522,4 +508,4 @@ class LabelReachable {
 
 }  // namespace fst
 
-#endif  // FST_LIB_LABEL_REACHABLE_H_
+#endif  // FST_LABEL_REACHABLE_H_

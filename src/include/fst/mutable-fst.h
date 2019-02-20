@@ -4,8 +4,8 @@
 // Expanded FST augmented with mutators; interface class definition and
 // mutable arc iterator interface.
 
-#ifndef FST_LIB_MUTABLE_FST_H_
-#define FST_LIB_MUTABLE_FST_H_
+#ifndef FST_MUTABLE_FST_H_
+#define FST_MUTABLE_FST_H_
 
 #include <stddef.h>
 #include <sys/types.h>
@@ -55,6 +55,10 @@ class MutableFst : public ExpandedFst<A> {
 
   // Adds an arc to state.
   virtual void AddArc(StateId, const Arc &arc) = 0;
+
+  // Adds an arc (passed by rvalue reference) to state. Allows subclasses
+  // to optionally implement move semantics. Defaults to lvalue overload.
+  virtual void AddArc(StateId state, Arc &&arc) { AddArc(state, arc); }
 
   // Deletes some states, preserving original StateId ordering.
   virtual void DeleteStates(const std::vector<StateId> &) = 0;
@@ -301,6 +305,11 @@ class ImplToMutableFst : public ImplToExpandedFst<Impl, FST> {
     GetMutableImpl()->AddArc(s, arc);
   }
 
+  void AddArc(StateId s, Arc &&arc) override {
+    MutateCheck();
+    GetMutableImpl()->AddArc(s, std::move(arc));
+  }
+
   void DeleteStates(const std::vector<StateId> &dstates) override {
     MutateCheck();
     GetMutableImpl()->DeleteStates(dstates);
@@ -386,4 +395,4 @@ class ImplToMutableFst : public ImplToExpandedFst<Impl, FST> {
 
 }  // namespace fst
 
-#endif  // FST_LIB_MUTABLE_FST_H_
+#endif  // FST_MUTABLE_FST_H_

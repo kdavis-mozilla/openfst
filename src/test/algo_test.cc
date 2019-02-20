@@ -3,11 +3,13 @@
 //
 // Regression test for various FST algorithms.
 
-#include "./algo_test.h"
+#include <fst/test/algo_test.h>
 
 #include <cstdlib>
 
 #include <vector>
+
+#include <fst/flags.h>
 
 // DEFINEs determine which semirings are tested; these are controlled by
 // the `defines` attributes of the associated build rules.

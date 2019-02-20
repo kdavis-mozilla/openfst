@@ -1,14 +1,15 @@
 // See www.openfst.org for extensive documentation on this weighted
 // finite-state transducer library.
 
-#ifndef FST_LIB_MAPPED_FILE_H_
-#define FST_LIB_MAPPED_FILE_H_
+#ifndef FST_MAPPED_FILE_H_
+#define FST_MAPPED_FILE_H_
 
 #include <cstddef>
 #include <istream>
 #include <string>
 
 #include <fst/compat.h>
+#include <fst/flags.h>
 
 namespace fst {
 
@@ -42,6 +43,12 @@ class MappedFile {
   static MappedFile *Map(std::istream *istrm, bool memorymap,
                          const string &source, size_t size);
 
+  // Returns a MappedFile object that contains the contents of the file referred
+  // to by the file descriptor starting from pos with size bytes. If the
+  // memory mapping fails, nullptr is returned. In contrast to Map(), this
+  // factory function does not backoff to allocating and reading.
+  static MappedFile *MapFromFileDescriptor(int fd, int pos, size_t size);
+
   // Creates a MappedFile object with a new[]'ed block of memory of size. The
   // align argument can be used to specify a desired block alignment.
   // This is RECOMMENDED FOR INTERNAL USE ONLY as it may change in future
@@ -71,4 +78,4 @@ class MappedFile {
 };
 }  // namespace fst
 
-#endif  // FST_LIB_MAPPED_FILE_H_
+#endif  // FST_MAPPED_FILE_H_

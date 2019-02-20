@@ -5,8 +5,8 @@
 // implement project/invert. Consider using when operation does
 // not change the number of arcs (except possibly superfinal arcs).
 
-#ifndef FST_LIB_ARC_MAP_H_
-#define FST_LIB_ARC_MAP_H_
+#ifndef FST_ARC_MAP_H_
+#define FST_ARC_MAP_H_
 
 #include <string>
 #include <unordered_map>
@@ -48,7 +48,7 @@ enum MapSymbolsAction {
 
 // The ArcMapper interfaces defines how arcs and final weights are mapped.
 // This is useful for implementing operations that do not change the number of
-// arcs (expect possibly superfinal arcs).
+// arcs (except possibly superfinal arcs).
 //
 // template <class A, class B>
 // class ArcMapper {
@@ -141,7 +141,7 @@ void ArcMap(MutableFst<A> *fst, C *mapper) {
               fst->SetFinal(superfinal, Weight::One());
             }
             final_arc.nextstate = superfinal;
-            fst->AddArc(state, final_arc);
+            fst->AddArc(state, std::move(final_arc));
             fst->SetFinal(state, Weight::Zero());
           } else {
             fst->SetFinal(state, final_arc.weight);
@@ -201,7 +201,7 @@ void ArcMap(const Fst<A> &ifst, MutableFst<B> *ofst, C *mapper) {
   const auto final_action = mapper->FinalAction();
   if (ifst.Properties(kExpanded, false)) {
     ofst->ReserveStates(
-        CountStates(ifst) + final_action == MAP_NO_SUPERFINAL ? 0 : 1);
+        CountStates(ifst) + (final_action == MAP_NO_SUPERFINAL ? 0 : 1));
   }
   // Adds all states.
   for (StateIterator<Fst<A>> siter(ifst); !siter.Done(); siter.Next()) {
@@ -215,7 +215,8 @@ void ArcMap(const Fst<A> &ifst, MutableFst<B> *ofst, C *mapper) {
   for (StateIterator<Fst<A>> siter(ifst); !siter.Done(); siter.Next()) {
     StateId s = siter.Value();
     if (s == ifst.Start()) ofst->SetStart(s);
-    ofst->ReserveArcs(s, ifst.NumArcs(s));
+    ofst->ReserveArcs(
+        s, ifst.NumArcs(s) + (final_action != MAP_NO_SUPERFINAL ? 1 : 0));
     for (ArcIterator<Fst<A>> aiter(ifst, s); !aiter.Done(); aiter.Next()) {
       ofst->AddArc(s, (*mapper)(aiter.Value()));
     }
@@ -239,7 +240,7 @@ void ArcMap(const Fst<A> &ifst, MutableFst<B> *ofst, C *mapper) {
             ofst->SetFinal(superfinal, B::Weight::One());
           }
           final_arc.nextstate = superfinal;
-          ofst->AddArc(s, final_arc);
+          ofst->AddArc(s, std::move(final_arc));
           ofst->SetFinal(s, B::Weight::Zero());
         } else {
           ofst->SetFinal(s, final_arc.weight);
@@ -296,10 +297,11 @@ class ArcMapFstImpl : public CacheImpl<B> {
   using FstImpl<B>::SetInputSymbols;
   using FstImpl<B>::SetOutputSymbols;
 
-  using CacheImpl<B>::PushArc;
+  using CacheImpl<B>::EmplaceArc;
   using CacheImpl<B>::HasArcs;
   using CacheImpl<B>::HasFinal;
   using CacheImpl<B>::HasStart;
+  using CacheImpl<B>::PushArc;
   using CacheImpl<B>::SetArcs;
   using CacheImpl<B>::SetFinal;
   using CacheImpl<B>::SetStart;
@@ -424,8 +426,7 @@ class ArcMapFstImpl : public CacheImpl<B> {
          aiter.Next()) {
       auto aarc = aiter.Value();
       aarc.nextstate = FindOState(aarc.nextstate);
-      const auto &barc = (*mapper_)(aarc);
-      PushArc(s, barc);
+      PushArc(s, (*mapper_)(aarc));
     }
 
     // Check for superfinal arcs.
@@ -440,7 +441,7 @@ class ArcMapFstImpl : public CacheImpl<B> {
           if (final_arc.ilabel != 0 || final_arc.olabel != 0) {
             if (superfinal_ == kNoStateId) superfinal_ = nstates_++;
             final_arc.nextstate = superfinal_;
-            PushArc(s, final_arc);
+            PushArc(s, std::move(final_arc));
           }
           break;
         }
@@ -449,8 +450,8 @@ class ArcMapFstImpl : public CacheImpl<B> {
               (*mapper_)(A(0, 0, fst_->Final(FindIState(s)), kNoStateId));
           if (final_arc.ilabel != 0 || final_arc.olabel != 0 ||
               final_arc.weight != B::Weight::Zero()) {
-            PushArc(s, B(final_arc.ilabel, final_arc.olabel, final_arc.weight,
-                         superfinal_));
+            EmplaceArc(s, final_arc.ilabel, final_arc.olabel, final_arc.weight,
+                       superfinal_);
           }
           break;
         }
@@ -644,7 +645,7 @@ class IdentityArcMapper {
   using FromArc = A;
   using ToArc = A;
 
-  ToArc operator()(const FromArc &arc) const { return arc; }
+  constexpr ToArc operator()(const FromArc &arc) const { return arc; }
 
   constexpr MapFinalAction FinalAction() const { return MAP_NO_SUPERFINAL; }
 
@@ -656,7 +657,7 @@ class IdentityArcMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const { return props; }
+  constexpr uint64 Properties(uint64 props) const { return props; }
 };
 
 // Mapper that converts all input symbols to epsilon.
@@ -666,7 +667,7 @@ class InputEpsilonMapper {
   using FromArc = A;
   using ToArc = A;
 
-  ToArc operator()(const FromArc &arc) const {
+  constexpr ToArc operator()(const FromArc &arc) const {
     return ToArc(0, arc.olabel, arc.weight, arc.nextstate);
   }
 
@@ -680,8 +681,8 @@ class InputEpsilonMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const {
-    return (props & kSetArcProperties) | kIEpsilons;
+  constexpr uint64 Properties(uint64 props) const {
+    return (props & kSetArcProperties) | kIEpsilons | kILabelSorted;
   }
 };
 
@@ -692,7 +693,7 @@ class OutputEpsilonMapper {
   using FromArc = A;
   using ToArc = A;
 
-  ToArc operator()(const FromArc &arc) const {
+  constexpr ToArc operator()(const FromArc &arc) const {
     return ToArc(arc.ilabel, 0, arc.weight, arc.nextstate);
   }
 
@@ -706,8 +707,8 @@ class OutputEpsilonMapper {
     return MAP_CLEAR_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const {
-    return (props & kSetArcProperties) | kOEpsilons;
+  constexpr uint64 Properties(uint64 props) const {
+    return (props & kSetArcProperties) | kOEpsilons | kOLabelSorted;
   }
 };
 
@@ -718,8 +719,21 @@ class SuperFinalMapper {
  public:
   using FromArc = A;
   using ToArc = A;
+  using Label = typename FromArc::Label;
+  using Weight = typename FromArc::Weight;;
 
-  ToArc operator()(const FromArc &arc) const { return arc; }
+  // Arg allows setting super-final label.
+  explicit SuperFinalMapper(Label final_label = 0)
+      : final_label_(final_label) {}
+
+  ToArc operator()(const FromArc &arc) const {
+    // Super-final arc.
+    if (arc.nextstate == kNoStateId && arc.weight != Weight::Zero()) {
+      return ToArc(final_label_, final_label_, arc.weight, kNoStateId);
+    } else {
+      return arc;
+    }
+  }
 
   constexpr MapFinalAction FinalAction() const {
     return MAP_REQUIRE_SUPERFINAL;
@@ -734,8 +748,16 @@ class SuperFinalMapper {
   }
 
   uint64 Properties(uint64 props) const {
-    return props & kAddSuperFinalProperties;
+    if (final_label_ == 0) {
+      return props & kAddSuperFinalProperties;
+    } else {
+      return props & kAddSuperFinalProperties &
+          kILabelInvariantProperties & kOLabelInvariantProperties;
+    }
   }
+
+ private:
+  Label final_label_;
 };
 
 // Mapper that leaves labels and nextstate unchanged and constructs a new weight
@@ -752,10 +774,10 @@ class WeightConvertMapper {
   using FromWeight = typename FromArc::Weight;
   using ToWeight = typename ToArc::Weight;
 
-  explicit WeightConvertMapper(const Converter &c = Converter())
+  constexpr explicit WeightConvertMapper(const Converter &c = Converter())
       : convert_weight_(c) {}
 
-  ToArc operator()(const FromArc &arc) const {
+  constexpr ToArc operator()(const FromArc &arc) const {
     return ToArc(arc.ilabel, arc.olabel, convert_weight_(arc.weight),
                  arc.nextstate);
   }
@@ -770,10 +792,10 @@ class WeightConvertMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const { return props; }
+  constexpr uint64 Properties(uint64 props) const { return props; }
 
  private:
-  Converter convert_weight_;
+  const Converter convert_weight_;
 };
 
 // Non-precision-changing weight conversions; consider using more efficient
@@ -1026,6 +1048,9 @@ class GallicToNewSymbolsMapper {
   mutable bool error_;
 };
 
+// TODO(kbg): Add common base class for those mappers which do nothing except
+// mutate their weights.
+
 // Mapper to add a constant to all weights.
 template <class A>
 class PlusMapper {
@@ -1034,7 +1059,7 @@ class PlusMapper {
   using ToArc = A;
   using Weight = typename FromArc::Weight;
 
-  explicit PlusMapper(Weight weight) : weight_(std::move(weight)) {}
+  constexpr explicit PlusMapper(Weight weight) : weight_(std::move(weight)) {}
 
   ToArc operator()(const FromArc &arc) const {
     if (arc.weight == Weight::Zero()) return arc;
@@ -1052,7 +1077,7 @@ class PlusMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return props & kWeightInvariantProperties;
   }
 
@@ -1068,7 +1093,7 @@ class TimesMapper {
   using ToArc = A;
   using Weight = typename FromArc::Weight;
 
-  explicit TimesMapper(Weight weight) : weight_(std::move(weight)) {}
+  constexpr explicit TimesMapper(Weight weight) : weight_(std::move(weight)) {}
 
   ToArc operator()(const FromArc &arc) const {
     if (arc.weight == Weight::Zero()) return arc;
@@ -1086,7 +1111,7 @@ class TimesMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return props & kWeightInvariantProperties;
   }
 
@@ -1094,7 +1119,11 @@ class TimesMapper {
   const Weight weight_;
 };
 
-// Mapper to take all arc-weights to a fixed power.
+// Mapper to take all weights to a constant power. The power argument is stored
+// as a double, so if there is a floating-point power implementation for this
+// weight type, it will take precedence. Otherwise, the power argument's 53 bits
+// of integer precision will be implicitly converted to a size_t and the default
+// power implementation (iterated multiplication) will be used instead.
 template <class A>
 class PowerMapper {
  public:
@@ -1102,25 +1131,29 @@ class PowerMapper {
   using ToArc = A;
   using Weight = typename FromArc::Weight;
 
-  explicit PowerMapper(size_t power) : power_(power) {}
+  explicit PowerMapper(double power) : power_(power) {}
 
   ToArc operator()(const FromArc &arc) const {
     return ToArc(arc.ilabel, arc.olabel, Power(arc.weight, power_),
                  arc.nextstate);
   }
 
-  MapFinalAction FinalAction() const { return MAP_NO_SUPERFINAL; }
+  constexpr MapFinalAction FinalAction() const { return MAP_NO_SUPERFINAL; }
 
-  MapSymbolsAction InputSymbolsAction() const { return MAP_COPY_SYMBOLS; }
+  constexpr MapSymbolsAction InputSymbolsAction() const {
+    return MAP_COPY_SYMBOLS;
+  }
 
-  MapSymbolsAction OutputSymbolsAction() const { return MAP_COPY_SYMBOLS; }
+  constexpr MapSymbolsAction OutputSymbolsAction() const {
+    return MAP_COPY_SYMBOLS;
+  }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return props & kWeightInvariantProperties;
   }
 
  private:
-  size_t power_;
+  const double power_;
 };
 
 // Mapper to reciprocate all non-Zero() weights.
@@ -1147,7 +1180,7 @@ class InvertWeightMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return props & kWeightInvariantProperties;
   }
 };
@@ -1178,7 +1211,7 @@ class RmWeightMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return (props & kWeightInvariantProperties) | kUnweighted;
   }
 };
@@ -1211,7 +1244,7 @@ class QuantizeMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const {
+  constexpr uint64 Properties(uint64 props) const {
     return props & kWeightInvariantProperties;
   }
 
@@ -1232,7 +1265,7 @@ class ReverseWeightMapper {
   using FromArc = A;
   using ToArc = B;
 
-  ToArc operator()(const FromArc &arc) const {
+  constexpr ToArc operator()(const FromArc &arc) const {
     return ToArc(arc.ilabel, arc.olabel, arc.weight.Reverse(), arc.nextstate);
   }
 
@@ -1246,9 +1279,9 @@ class ReverseWeightMapper {
     return MAP_COPY_SYMBOLS;
   }
 
-  uint64 Properties(uint64 props) const { return props; }
+  constexpr uint64 Properties(uint64 props) const { return props; }
 };
 
 }  // namespace fst
 
-#endif  // FST_LIB_ARC_MAP_H_
+#endif  // FST_ARC_MAP_H_

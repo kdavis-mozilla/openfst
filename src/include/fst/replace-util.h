@@ -3,8 +3,8 @@
 //
 // Utility classes for the recursive replacement of FSTs (RTNs).
 
-#ifndef FST_LIB_REPLACE_UTIL_H_
-#define FST_LIB_REPLACE_UTIL_H_
+#ifndef FST_REPLACE_UTIL_H_
+#define FST_REPLACE_UTIL_H_
 
 #include <map>
 #include <unordered_map>
@@ -349,7 +349,7 @@ void ReplaceUtil<Arc>::GetDependencies(bool stats) const {
         auto it = nonterminal_hash_.find(arc.olabel);
         if (it != nonterminal_hash_.end()) {
           const auto j = it->second;
-          depfst_.AddArc(i, Arc(arc.olabel, arc.olabel, Weight::One(), j));
+          depfst_.EmplaceArc(i, arc.olabel, arc.olabel, Weight::One(), j);
           if (have_stats_) {
             ++stats_[i].nnonterms;
             ++stats_[j].nref;
@@ -475,7 +475,7 @@ void ReplaceUtil<Arc>::ReplaceLabels(const std::vector<Label> &labels) {
       if (label_set.count(label) > 0) arcs.push_back(arc);
     }
     pfst.DeleteArcs(i);
-    for (const auto &arc : arcs) pfst.AddArc(i, arc);
+    for (auto &arc : arcs) pfst.AddArc(i, std::move(arc));
   }
   std::vector<Label> toporder;
   if (!GetTopOrder(pfst, &toporder)) {
@@ -626,4 +626,4 @@ void ReplaceUtil<Arc>::GetSCCProperties() const {
 
 }  // namespace fst
 
-#endif  // FST_LIB_REPLACE_UTIL_H_
+#endif  // FST_REPLACE_UTIL_H_

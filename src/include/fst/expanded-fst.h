@@ -3,11 +3,12 @@
 //
 // Generic FST augmented with state count-interface class definition.
 
-#ifndef FST_LIB_EXPANDED_FST_H_
-#define FST_LIB_EXPANDED_FST_H_
+#ifndef FST_EXPANDED_FST_H_
+#define FST_EXPANDED_FST_H_
 
 #include <sys/types.h>
 #include <istream>
+#include <memory>
 #include <string>
 
 #include <fst/log.h>
@@ -115,8 +116,6 @@ class ImplToExpandedFst : public ImplToFst<Impl, FST> {
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  using ImplToFst<Impl, FST>::operator=;
-
   StateId NumStates() const override { return GetImpl()->NumStates(); }
 
  protected:
@@ -124,9 +123,6 @@ class ImplToExpandedFst : public ImplToFst<Impl, FST> {
 
   explicit ImplToExpandedFst(std::shared_ptr<Impl> impl)
       : ImplToFst<Impl, FST>(impl) {}
-
-  ImplToExpandedFst(const ImplToExpandedFst<Impl, FST> &fst)
-      : ImplToFst<Impl, FST>(fst) {}
 
   ImplToExpandedFst(const ImplToExpandedFst<Impl, FST> &fst, bool safe)
       : ImplToFst<Impl, FST>(fst, safe) {}
@@ -180,4 +176,4 @@ typename Arc::StateId CountArcs(const Fst<Arc> &fst) {
 
 }  // namespace fst
 
-#endif  // FST_LIB_EXPANDED_FST_H_
+#endif  // FST_EXPANDED_FST_H_

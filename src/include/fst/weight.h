@@ -3,13 +3,14 @@
 //
 // General weight set and associated semiring operation definitions.
 
-#ifndef FST_LIB_WEIGHT_H_
-#define FST_LIB_WEIGHT_H_
+#ifndef FST_WEIGHT_H_
+#define FST_WEIGHT_H_
 
 #include <cctype>
 #include <cmath>
 #include <iostream>
 #include <sstream>
+#include <type_traits>
 #include <utility>
 
 #include <fst/compat.h>
@@ -60,15 +61,26 @@ namespace fst {
 //
 //   Quantize: quantizes w.r.t delta (for inexact weights)
 //
-//   Divide: for all a, b, c s.t. Times(a, b) == c
-//
-//     --> b' = Divide(c, a, DIVIDE_LEFT) if a left semiring, b'.Member()
-//      and Times(a, b') == c
-//     --> a' = Divide(c, b, DIVIDE_RIGHT) if a right semiring, a'.Member()
-//      and Times(a', b) == c
-//     --> b' = Divide(c, a) = Divide(c, a, DIVIDE_ANY) =
-//      Divide(c, a, DIVIDE_LEFT) = Divide(c, a, DIVIDE_RIGHT) if a
-//      commutative semiring, b'.Member() and Times(a, b') = Times(b', a) = c
+//   Divide:
+//     - In a left semiring, for all a, b, b', c:
+//       if Times(a, b) = c, Divide(c, a, DIVIDE_LEFT) = b' and b'.Member(),
+//       then Times(a, b') = c.
+//     - In a right semiring, for all a, a', b, c:
+//       if Times(a, b) = c, Divide(c, b, DIVIDE_RIGHT) = a' and a'.Member(),
+//       then Times(a', b) = c.
+//     - In a commutative semiring,
+//        * for all a, c:
+//          Divide(c, a, DIVIDE_ANY) = Divide(c, a, DIVIDE_LEFT)
+//           = Divide(c, a, DIVIDE_RIGHT)
+//        * for all a, b, b', c:
+//          if Times(a, b), Divide(c, a, DIVIDE_ANY) = b' and b'.Member(),
+//          then Times(a, b') = c
+//     - In the case where there exist no b such that c = Times(a, b), the
+//       return value of Divide(c, a, DIVIDE_LEFT) is unspecified. Returning
+//       Weight::NoWeight() is recommemded but not required in order to
+//       allow the most efficient implementation.
+//     - All algorithms in this library only call Divide(c, a) when it is
+//       guaranteed that there exists a b such that c = Times(a, b).
 //
 //   ReverseWeight: the type of the corresponding reverse weight.
 //
@@ -117,6 +129,15 @@ constexpr uint64 kPath = 0x0000000000000010ULL;
 // This is also used for a few other weight generation defaults.
 constexpr size_t kNumRandomWeights = 5;
 
+// Weight property boolean constants needed for SFINAE.
+
+template <class W>
+using IsIdempotent = std::integral_constant<bool,
+    (W::Properties() & kIdempotent) != 0>;
+
+template <class W>
+using IsPath = std::integral_constant<bool, (W::Properties() & kPath) != 0>;
+
 // Determines direction of division.
 enum DivideType {
   DIVIDE_LEFT,   // left division
@@ -144,35 +165,45 @@ enum DivideType {
 //
 // We define the strict version of this order below.
 
+// Declares the template with a second parameter determining whether or not it
+// can actually be constructed.
+template <class W, class IdempotentType = void>
+class NaturalLess;
+
+// Variant for idempotent weights.
 template <class W>
-class NaturalLess {
+class NaturalLess<W, typename std::enable_if<IsIdempotent<W>::value>::type> {
  public:
   using Weight = W;
 
-  NaturalLess() {
-    // TODO(kbg): Make this a compile-time static_assert once:
-    // 1) All weight properties are made constexpr for all weight types.
-    // 2) We have a pleasant way to "deregister" this operation for non-path
-    //    semirings so an informative error message is produced. The best
-    //    solution will probably involve some kind of SFINAE magic.
-    if (!(W::Properties() & kIdempotent)) {
-      FSTERROR() << "NaturalLess: Weight type is not idempotent: " << W::Type();
-    }
-  }
+  NaturalLess() {}
 
-  bool operator()(const W &w1, const W &w2) const {
-    return (Plus(w1, w2) == w1) && w1 != w2;
+  bool operator()(const Weight &w1, const Weight &w2) const {
+    return w1 != w2 && Plus(w1, w2) == w1;
   }
 };
 
-// Power is the iterated product for arbitrary semirings such that
-// Power(w, 0) is One() for the semiring, and Power(w, n) =
-// Times(Power(w, n-1), w).
+// Non-constructible variant for non-idempotent weights.
+template <class W>
+class NaturalLess<W, typename std::enable_if<!IsIdempotent<W>::value>::type> {
+ public:
+  using Weight = W;
 
+  // TODO(kbg): Trace down anywhere this is being instantiated, then add a
+  // static_assert to prevent this from being instantiated.
+  NaturalLess() {
+    FSTERROR() << "NaturalLess: Weight type is not idempotent: " << W::Type();
+  }
+
+  bool operator()(const Weight &, const Weight &) const { return false; }
+};
+
+// Power is the iterated product for arbitrary semirings such that Power(w, 0)
+// is One() for the semiring, and Power(w, n) = Times(Power(w, n - 1), w).
 template <class Weight>
-Weight Power(Weight w, size_t n) {
+Weight Power(const Weight &weight, size_t n) {
   auto result = Weight::One();
-  for (size_t i = 0; i < n; ++i) result = Times(result, w);
+  for (size_t i = 0; i < n; ++i) result = Times(result, weight);
   return result;
 }
 
@@ -346,8 +377,10 @@ inline bool CompositeWeightReader::ReadElement(T *comp, bool last) {
   std::istringstream istrm(s);
   istrm >> *comp;
   // Skips separator/close parenthesis.
+  if (c_ != std::istream::traits_type::eof() && !std::isspace(c_)) {
+    c_ = istrm_.get();
+  }
   const bool is_eof = c_ == std::istream::traits_type::eof();
-  if (!is_eof && !std::isspace(c_)) c_ = istrm_.get();
   // Clears fail bit if just EOF.
   if (is_eof && !istrm_.bad()) istrm_.clear(std::ios::eofbit);
   return !is_eof && !std::isspace(c_);
@@ -355,4 +388,4 @@ inline bool CompositeWeightReader::ReadElement(T *comp, bool last) {
 
 }  // namespace fst
 
-#endif  // FST_LIB_WEIGHT_H_
+#endif  // FST_WEIGHT_H_

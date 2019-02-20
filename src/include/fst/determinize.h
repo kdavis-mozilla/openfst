@@ -3,14 +3,15 @@
 //
 // Functions and classes to determinize an FST.
 
-#ifndef FST_LIB_DETERMINIZE_H_
-#define FST_LIB_DETERMINIZE_H_
+#ifndef FST_DETERMINIZE_H_
+#define FST_DETERMINIZE_H_
 
 #include <algorithm>
 #include <climits>
 #include <forward_list>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <fst/log.h>
@@ -230,14 +231,14 @@ class DefaultDeterminizeFilter {
   // Filters transition, possibly modifying label map. Returns true if arc is
   // added to the label map.
   bool FilterArc(const Arc &arc, const Element &src_element,
-                 const Element &dest_element, LabelMap *label_map) const {
+                 Element &&dest_element, LabelMap *label_map) const {
     // Adds element to unique state tuple for arc label.
     auto &det_arc = (*label_map)[arc.ilabel];
     if (det_arc.label == kNoLabel) {
       det_arc = internal::DeterminizeArc<StateTuple>(arc);
       det_arc.dest_tuple->filter_state = FilterState(0);
     }
-    det_arc.dest_tuple->subset.push_front(dest_element);
+    det_arc.dest_tuple->subset.push_front(std::move(dest_element));
     return true;
   }
 
@@ -588,9 +589,8 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
   StateId ComputeStart() override {
     const auto s = GetFst().Start();
     if (s == kNoStateId) return kNoStateId;
-    const Element element(s, Weight::One());
     auto *tuple = new StateTuple;
-    tuple->subset.push_front(element);
+    tuple->subset.emplace_front(s, Weight::One());
     tuple->filter_state = filter_->Start();
     return FindState(tuple);
   }
@@ -638,7 +638,7 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
     LabelMap label_map;
     GetLabelMap(s, &label_map);
     for (auto it = label_map.begin(); it != label_map.end(); ++it) {
-      AddArc(s, it->second);
+      AddArc(s, std::move(it->second));
     }
     SetArcs(s);
   }
@@ -657,9 +657,10 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
       for (ArcIterator<Fst<Arc>> aiter(GetFst(), src_element.state_id);
            !aiter.Done(); aiter.Next()) {
         const auto &arc = aiter.Value();
-        const Element dest_element(arc.nextstate,
-                                   Times(src_element.weight, arc.weight));
-        filter_->FilterArc(arc, src_element, dest_element, label_map);
+        Element dest_element(arc.nextstate,
+                             Times(src_element.weight, arc.weight));
+        filter_->FilterArc(arc, src_element, std::move(dest_element),
+                           label_map);
       }
     }
     for (auto it = label_map->begin(); it != label_map->end(); ++it) {
@@ -703,10 +704,10 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
 
   // Adds an arc from state S to the destination state associated with state
   // tuple in det_arc as created by GetLabelMap.
-  void AddArc(StateId s, const DetArc &det_arc) {
-    const Arc arc(det_arc.label, det_arc.label, det_arc.weight,
-                  FindState(det_arc.dest_tuple));
-    CacheImpl<Arc>::PushArc(s, arc);
+  void AddArc(StateId s, DetArc &&det_arc) {
+    CacheImpl<Arc>::EmplaceArc(
+        s, det_arc.label, det_arc.label, std::move(det_arc.weight),
+        FindState(det_arc.dest_tuple));
   }
 
   float delta_;                         // Quantization delta for weights.
@@ -865,18 +866,24 @@ class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
   template <class CommonDivisor, class Filter, class StateTable>
   DeterminizeFst(
       const Fst<Arc> &fst,
-      const DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable> &opts)
+      const DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>
+          &opts =
+              DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>())
       : ImplToFst<Impl>(CreateImpl(fst, opts)) {}
 
-  // This acceptor-only version additionally computes the distance to
-  // final states in the output if provided with those distances for the
-  // input. Useful for e.g., computing the k-shortest unique paths.
-  template <class D, class F, class T>
-  DeterminizeFst(const Fst<A> &fst, const std::vector<Weight> *in_dist,
-                 std::vector<Weight> *out_dist,
-                 const DeterminizeFstOptions<A, D, F, T> &opts)
+  // This acceptor-only version additionally computes the distance to final
+  // states in the output if provided with those distances for the input; this
+  // is useful for e.g., computing the k-shortest unique paths.
+  template <class CommonDivisor, class Filter, class StateTable>
+  DeterminizeFst(
+      const Fst<Arc> &fst, const std::vector<Weight> *in_dist,
+      std::vector<Weight> *out_dist,
+      const DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>
+          &opts =
+              DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>())
       : ImplToFst<Impl>(
-            std::make_shared<internal::DeterminizeFsaImpl<A, D, F, T>>(
+            std::make_shared<internal::DeterminizeFsaImpl<Arc, CommonDivisor,
+                                                          Filter, StateTable>>(
                 fst, in_dist, out_dist, opts)) {
     if (!fst.Properties(kAcceptor, true)) {
       FSTERROR() << "DeterminizeFst: "
@@ -955,21 +962,21 @@ namespace internal {
 template <class A, GallicType G, class D, class F, class T>
 void DeterminizeFstImpl<A, G, D, F, T>::Init(const Fst<A> &fst, F *filter) {
   // Mapper to an acceptor.
-  ToFst to_fst(fst, ToMapper());
+  const ToFst to_fst(fst, ToMapper());
   auto *to_filter = filter ? new ToFilter(to_fst, filter) : nullptr;
   // This recursive call terminates since it is to a (non-recursive)
   // different constructor.
-  CacheOptions copts(GetCacheGc(), GetCacheLimit());
-  DeterminizeFstOptions<ToArc, ToCommonDivisor, ToFilter, ToStateTable> dopts(
-      copts, delta_, 0, DETERMINIZE_FUNCTIONAL, false, to_filter);
+  const CacheOptions copts(GetCacheGc(), GetCacheLimit());
+  const DeterminizeFstOptions<ToArc, ToCommonDivisor, ToFilter, ToStateTable>
+      dopts(copts, delta_, 0, DETERMINIZE_FUNCTIONAL, false, to_filter);
   // Uses acceptor-only constructor to avoid template recursion.
-  DeterminizeFst<ToArc> det_fsa(to_fst, nullptr, nullptr, dopts);
+  const DeterminizeFst<ToArc> det_fsa(to_fst, nullptr, nullptr, dopts);
   // Mapper back to transducer.
-  FactorWeightOptions<ToArc> fopts(
+  const FactorWeightOptions<ToArc> fopts(
       CacheOptions(true, 0), delta_, kFactorFinalWeights, subsequential_label_,
       subsequential_label_, increment_subsequential_label_,
       increment_subsequential_label_);
-  FactorWeightFst<ToArc, FactorIterator> factored_fst(det_fsa, fopts);
+  const FactorWeightFst<ToArc, FactorIterator> factored_fst(det_fsa, fopts);
   from_fst_.reset(new FromFst(factored_fst, FromMapper(subsequential_label_)));
 }
 
@@ -1038,7 +1045,7 @@ struct DeterminizeOptions {
 // Determinizes a weighted transducer. This version writes the
 // determinized Fst to an output MutableFst. The result will be an
 // equivalent FST that has the property that no state has two
-// transitions with the same input label.  For this algorithm, epsilon
+// transitions with the same input label. For this algorithm, epsilon
 // transitions are treated as regular symbols (cf. RmEpsilon).
 //
 // The transducer must be functional. The weights must be (weakly)
@@ -1083,4 +1090,4 @@ void Determinize(
 
 }  // namespace fst
 
-#endif  // FST_LIB_DETERMINIZE_H_
+#endif  // FST_DETERMINIZE_H_

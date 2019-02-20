@@ -8,8 +8,8 @@
 //  positive, TropicalWeight.Value() > 0.0, recommended value 1.0
 //  negative, TropicalWeight.Value() <= 0.0, recommended value -1.0
 
-#ifndef FST_LIB_SIGNED_LOG_WEIGHT_H_
-#define FST_LIB_SIGNED_LOG_WEIGHT_H_
+#ifndef FST_SIGNED_LOG_WEIGHT_H_
+#define FST_SIGNED_LOG_WEIGHT_H_
 
 #include <cstdlib>
 
@@ -29,9 +29,7 @@ class SignedLogWeightTpl : public PairWeight<TropicalWeight, LogWeightTpl<T>> {
   using PairWeight<X1, X2>::Value1;
   using PairWeight<X1, X2>::Value2;
 
-  SignedLogWeightTpl() : PairWeight<X1, X2>() {}
-
-  SignedLogWeightTpl(const SignedLogWeightTpl &w) : PairWeight<X1, X2>(w) {}
+  SignedLogWeightTpl() noexcept : PairWeight<X1, X2>() {}
 
   explicit SignedLogWeightTpl(const PairWeight<X1, X2> &w)
       : PairWeight<X1, X2>(w) {}
@@ -59,6 +57,8 @@ class SignedLogWeightTpl : public PairWeight<TropicalWeight, LogWeightTpl<T>> {
     return *type;
   }
 
+  bool IsPositive() const { return Value1().Value() > 0; }
+
   SignedLogWeightTpl Quantize(float delta = kDelta) const {
     return SignedLogWeightTpl(PairWeight<X1, X2>::Quantize(delta));
   }
@@ -76,7 +76,7 @@ class SignedLogWeightTpl : public PairWeight<TropicalWeight, LogWeightTpl<T>> {
 
   size_t Hash() const {
     size_t h1;
-    if (Value2() == X2::Zero() || Value1().Value() > 0.0) {
+    if (Value2() == X2::Zero() || IsPositive()) {
       h1 = TropicalWeight(1.0).Hash();
     } else {
       h1 = TropicalWeight(-1.0).Hash();
@@ -94,8 +94,8 @@ inline SignedLogWeightTpl<T> Plus(const SignedLogWeightTpl<T> &w1,
   using X1 = TropicalWeight;
   using X2 = LogWeightTpl<T>;
   if (!w1.Member() || !w2.Member()) return SignedLogWeightTpl<T>::NoWeight();
-  const auto s1 = w1.Value1().Value() > 0.0;
-  const auto s2 = w2.Value1().Value() > 0.0;
+  const auto s1 = w1.IsPositive();
+  const auto s2 = w2.IsPositive();
   const bool equal = (s1 == s2);
   const auto f1 = w1.Value2().Value();
   const auto f2 = w2.Value2().Value();
@@ -112,18 +112,18 @@ inline SignedLogWeightTpl<T> Plus(const SignedLogWeightTpl<T> &w1,
   } else if (f1 > f2) {
     if (equal) {
       return SignedLogWeightTpl<T>(X1(w1.Value1()),
-                                   X2(f2 - log(1.0F + exp(f2 - f1))));
+                                   X2(f2 - internal::LogPosExp(f1 - f2)));
     } else {
       return SignedLogWeightTpl<T>(X1(w2.Value1()),
-                                   X2((f2 - log(1.0F - exp(f2 - f1)))));
+                                   X2((f2 - internal::LogNegExp(f1 - f2))));
     }
   } else {
     if (equal) {
       return SignedLogWeightTpl<T>(X1(w2.Value1()),
-                                   X2((f1 - log(1.0F + exp(f1 - f2)))));
+                                   X2((f1 - internal::LogPosExp(f2 - f1))));
     } else {
       return SignedLogWeightTpl<T>(X1(w1.Value1()),
-                                   X2((f1 - log(1.0F - exp(f1 - f2)))));
+                                   X2((f1 - internal::LogNegExp(f2 - f1))));
     }
   }
 }
@@ -140,8 +140,8 @@ inline SignedLogWeightTpl<T> Times(const SignedLogWeightTpl<T> &w1,
                                    const SignedLogWeightTpl<T> &w2) {
   using X2 = LogWeightTpl<T>;
   if (!w1.Member() || !w2.Member()) return SignedLogWeightTpl<T>::NoWeight();
-  const auto s1 = w1.Value1().Value() > 0.0;
-  const auto s2 = w2.Value1().Value() > 0.0;
+  const auto s1 = w1.IsPositive();
+  const auto s2 = w2.IsPositive();
   const auto f1 = w1.Value2().Value();
   const auto f2 = w2.Value2().Value();
   if (s1 == s2) {
@@ -157,8 +157,8 @@ inline SignedLogWeightTpl<T> Divide(const SignedLogWeightTpl<T> &w1,
                                     DivideType typ = DIVIDE_ANY) {
   using X2 = LogWeightTpl<T>;
   if (!w1.Member() || !w2.Member()) return SignedLogWeightTpl<T>::NoWeight();
-  const auto s1 = w1.Value1().Value() > 0.0;
-  const auto s2 = w2.Value1().Value() > 0.0;
+  const auto s1 = w1.IsPositive();
+  const auto s2 = w2.IsPositive();
   const auto f1 = w1.Value2().Value();
   const auto f2 = w2.Value2().Value();
   if (f2 == FloatLimits<T>::PosInfinity()) {
@@ -177,27 +177,31 @@ inline SignedLogWeightTpl<T> Divide(const SignedLogWeightTpl<T> &w1,
 template <class T>
 inline bool ApproxEqual(const SignedLogWeightTpl<T> &w1,
                         const SignedLogWeightTpl<T> &w2, float delta = kDelta) {
-  const auto s1 = w1.Value1().Value() > 0.0;
-  const auto s2 = w2.Value1().Value() > 0.0;
-  if (s1 == s2) {
+  using X2 = LogWeightTpl<T>;
+  if (w1.IsPositive() == w2.IsPositive()) {
     return ApproxEqual(w1.Value2(), w2.Value2(), delta);
   } else {
-    return w1.Value2() == LogWeightTpl<T>::Zero() &&
-           w2.Value2() == LogWeightTpl<T>::Zero();
+    return ApproxEqual(w1.Value2(), X2::Zero(), delta)
+        && ApproxEqual(w2.Value2(), X2::Zero(), delta);
   }
 }
 
 template <class T>
 inline bool operator==(const SignedLogWeightTpl<T> &w1,
                        const SignedLogWeightTpl<T> &w2) {
-  const auto s1 = w1.Value1().Value() > 0.0;
-  const auto s2 = w2.Value1().Value() > 0.0;
-  if (s1 == s2) {
+  using X2 = LogWeightTpl<T>;
+  if (w1.IsPositive() == w2.IsPositive()) {
     return w1.Value2() == w2.Value2();
   } else {
-    return (w1.Value2() == LogWeightTpl<T>::Zero()) &&
-           (w2.Value2() == LogWeightTpl<T>::Zero());
+    return w1.Value2() == X2::Zero()
+        && w2.Value2() == X2::Zero();
   }
+}
+
+template <class T>
+inline bool operator!=(const SignedLogWeightTpl<T> &w1,
+                       const SignedLogWeightTpl<T> &w2) {
+  return !(w1 == w2);
 }
 
 // Single-precision signed-log weight.
@@ -225,12 +229,12 @@ class Adder<SignedLogWeightTpl<T>> {
   using X2 = LogWeightTpl<T>;
 
   explicit Adder(Weight w = Weight::Zero())
-     : ssum_(w.Value1().Value() > 0.0),
+      : ssum_(w.IsPositive()),
         sum_(w.Value2().Value()),
         c_(0.0) { }
 
   Weight Add(const Weight &w) {
-    const auto sw = w.Value1().Value() > 0.0;
+    const auto sw = w.IsPositive();
     const auto f = w.Value2().Value();
     const bool equal = (ssum_ == sw);
 
@@ -268,7 +272,7 @@ class Adder<SignedLogWeightTpl<T>> {
   Weight Sum() { return Weight(X1(ssum_ ? 1.0 : -1.0), X2(sum_)); }
 
   void Reset(Weight w = Weight::Zero()) {
-    ssum_ = w.Value1().Value() > 0.0;
+    ssum_ = w.IsPositive();
     sum_ = w.Value2().Value();
     c_ = 0.0;
   }
@@ -433,4 +437,4 @@ class WeightGenerate<SignedLogWeightTpl<T>> {
 
 }  // namespace fst
 
-#endif  // FST_LIB_SIGNED_LOG_WEIGHT_H_
+#endif  // FST_SIGNED_LOG_WEIGHT_H_
